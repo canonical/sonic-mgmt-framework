@@ -20,8 +20,11 @@
 package server
 
 import (
+	"bufio"
 	"net/http"
-	"os/user"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/golang/glog"
 	//"github.com/msteinert/pam"
@@ -68,24 +71,53 @@ func PAMAuthUser(u string, p string) error {
 }
 */
 
-func IsAdminGroup(username string) bool {
+// hostEtcDir is the host's /etc, bind-mounted read-only into the container.
+var hostEtcDir = "/host_etc"
 
-	usr, err := user.Lookup(username)
+// readHostDB returns the colon-separated fields of each line of a host passwd/group file.
+func readHostDB(name string) [][]string {
+	f, err := os.Open(filepath.Join(hostEtcDir, name))
 	if err != nil {
+		glog.Errorf("Failed to read host %s; %v", name, err)
+		return nil
+	}
+	defer f.Close()
+	var entries [][]string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		if fields := strings.Split(sc.Text(), ":"); len(fields) >= 4 {
+			entries = append(entries, fields)
+		}
+	}
+	return entries
+}
+
+// IsAdminGroup reports whether username is in the host admin user's primary group.
+func IsAdminGroup(username string) bool {
+	userGid, adminGid := "", ""
+	for _, e := range readHostDB("passwd") {
+		if e[0] == username {
+			userGid = e[3]
+		}
+		if e[0] == "admin" {
+			adminGid = e[3]
+		}
+	}
+	glog.V(2).Infof("User:%s, gid=%s, admin gid=%s", username, userGid, adminGid)
+	if adminGid == "" {
 		return false
 	}
-	gids, err := usr.GroupIds()
-	if err != nil {
-		return false
+	if userGid == adminGid {
+		return true
 	}
-	glog.V(2).Infof("User:%s, groups=%s", username, gids)
-	admin, err := user.Lookup("admin")
-	if err != nil {
-		return false
-	}
-	for _, x := range gids {
-		if x == admin.Gid {
-			return true
+	for _, e := range readHostDB("group") {
+		if e[2] != adminGid {
+			continue
+		}
+		for _, m := range strings.Split(e[3], ",") {
+			if m == username {
+				return true
+			}
 		}
 	}
 	return false
