@@ -22,7 +22,7 @@ import json
 import urllib3
 import requests
 from requests.structures import CaseInsensitiveDict
-from six.moves.urllib.parse import quote
+from urllib.parse import quote
 from collections import OrderedDict
 from cli_log import log_info, log_warning
 
